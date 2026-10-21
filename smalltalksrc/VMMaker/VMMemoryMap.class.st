@@ -293,6 +293,11 @@ VMMemoryMap >> calculateMaskToUse [
 	self newSpaceMask: (memoryMapConfiguration newSpaceInitialAddress bitAnd: self spaceMaskToUse).
 	self oldSpaceMask: (oldSpaceFirst bitAnd: self spaceMaskToUse).
 	self permSpaceMask: (memoryMapConfiguration permSpaceInitialAddress bitAnd: self spaceMaskToUse).
+
+	"The masks only separate the spaces if old space starts at a power of two above new space.
+	 Otherwise every old object would also look young, and the first scavenge corrupts the heap."
+	self newSpaceMask = self oldSpaceMask
+		ifTrue: [ objectMemory error: 'Old space is not at a power-of-two boundary above new space: cannot tell new and old objects apart' ]
 ]
 
 { #category : 'initial addresses' }

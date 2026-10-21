@@ -33,7 +33,8 @@ sqInt uxMemoryExtraBytesLeft(sqInt includingSwap);
  * recomputes the space masks from the addresses actually obtained. */
 #define VA39_ADDRESS_LIMIT	((usqInt)0x8000000000ULL)
 #define VA39_FALLBACK_BASE	((usqInt)0x4000000000ULL)
-#define VA39_FALLBACK_LIMIT	((usqInt)0x7F00000000ULL)
+/* Lowest fallback base: must stay above new space (configured at 0x360000000). */
+#define VA39_FALLBACK_MIN_BASE	((usqInt)0x1000000000ULL)
 
 #if __OpenBSD__
 #define MAP_FLAGS	(MAP_ANON | MAP_PRIVATE | MAP_STACK)
@@ -193,21 +194,26 @@ sqAllocateMemory(usqInt minHeapSize, usqInt desiredHeapSize, usqInt desiredBaseA
 
 #ifndef __APPLE__
 	/* Fallback for kernels whose user address space cannot reach the
-	 * configured base (see VA39_* above). Slide a MAP_FIXED_NOREPLACE window
-	 * up through the VA39 user space; as a last resort let the kernel pick. */
+	 * configured base (see VA39_* above). VMMemoryMap tells new and old
+	 * objects apart by their high address bits, which only works when old
+	 * space starts at a power of two above new space and stays below the next
+	 * one. So try power-of-two bases, halving each time: 2^38 fits aarch64
+	 * VA39 (user space < 2^39), 2^37 fits RISC-V Sv39 (user space < 2^38). */
 	if (!heap && desiredBaseAddress >= VA39_ADDRESS_LIMIT) {
-		usqInt fallbackBaseAddress = VA39_FALLBACK_BASE;
-		heapLimit = initialHeapLimit;
-		while ((!heap) && (heapLimit >= minHeapSize)) {
-			if (MAP_FAILED == (heap = mmap((void*) fallbackBaseAddress, heapLimit, MAP_PROT, MAP_FLAGS | (fallbackBaseAddress ? MAP_FIXED_NOREPLACE : 0), devZero, 0))) {
-				heap = 0;
-				if (fallbackBaseAddress) {
-					fallbackBaseAddress = valign(fallbackBaseAddress + initialHeapLimit);
-					if (fallbackBaseAddress >= VA39_FALLBACK_LIMIT) {
-						fallbackBaseAddress = 0;
-					}
-				} else {
+		usqInt fallbackBaseAddress;
+		for (fallbackBaseAddress = VA39_FALLBACK_BASE;
+			 !heap && fallbackBaseAddress >= VA39_FALLBACK_MIN_BASE;
+			 fallbackBaseAddress >>= 1) {
+			heapLimit = initialHeapLimit;
+			while ((!heap) && (heapLimit >= minHeapSize) && (heapLimit <= fallbackBaseAddress)) {
+				if (MAP_FAILED == (heap = mmap((void*) fallbackBaseAddress, heapLimit, MAP_PROT, MAP_FLAGS | MAP_FIXED_NOREPLACE, devZero, 0))) {
+					heap = 0;
 					heapLimit = valign(heapLimit / 4 * 3);
+				} else if ((usqInt)heap != fallbackBaseAddress) {
+					/* Kernels before 4.17 ignore MAP_FIXED_NOREPLACE and treat the address as a hint. */
+					munmap(heap, heapLimit);
+					heap = 0;
+					break;
 				}
 			}
 		}

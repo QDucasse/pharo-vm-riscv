@@ -135,6 +135,36 @@ VMMemoryMapTest >> testOldSpaceAllocatedAtVA39FallbackAddressIsClassifiedCorrect
 ]
 
 { #category : 'tests' }
+VMMemoryMapTest >> testOldSpaceAllocatedAtSv39FallbackAddressIsClassifiedCorrectly [
+
+	"On RISC-V Sv39 user space ends at 2^38, below the VA39 fallback base, so the
+	 platform allocator falls back to the next power of two down (16r2000000000)."
+
+	memoryMap newSpaceStart: configuration newSpaceInitialAddress.
+	memoryMap newSpaceEnd:
+		configuration newSpaceInitialAddress + (64 * 1024 * 1024).
+	memoryMap oldSpaceStart: 16r2000000000.
+	memoryMap setOldSpaceEnd: 16r2000000000 + (512 * 1024 * 1024).
+	memoryMap calculateMaskToUse.
+	self assertSpacesAreClassifiedCorrectly
+]
+
+{ #category : 'tests' }
+VMMemoryMapTest >> testOldSpaceNotAtPowerOfTwoBoundaryIsRejected [
+
+	"Where a Sv39 kernel places a mapping when left to choose (near the top of user space).
+	 No address bit separates it from new space, so the masks cannot tell the spaces apart:
+	 this must be an error, not a heap that the first scavenge corrupts."
+
+	memoryMap newSpaceStart: configuration newSpaceInitialAddress.
+	memoryMap newSpaceEnd:
+		configuration newSpaceInitialAddress + (64 * 1024 * 1024).
+	memoryMap oldSpaceStart: 16r3FE3547000.
+	memoryMap setOldSpaceEnd: 16r3FE3547000 + (64 * 1024 * 1024).
+	self should: [ memoryMap calculateMaskToUse ] raise: Error
+]
+
+{ #category : 'tests' }
 VMMemoryMapTest >> testSpacesAllocatedAtConfiguredBasesAreClassifiedCorrectly [
 
 	"The primary path: allocation succeeded exactly at the configured bases
